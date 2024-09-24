@@ -16,6 +16,7 @@ from brian2tools import *
 import cython
 prefs.codegen.target = 'cython' 
 import gc as gcPython
+import ipdb
 
 class FlexibleWM:
   """Class running one trial of the network. We give it a dictionary including parameters not taking default value, as well as the name of the folder for saving."""
@@ -58,7 +59,7 @@ class FlexibleWM:
     # Saving/Using or not a pre-saved network
     self.specF['same_network_to_use'] = spec.get('same_network_to_use',False) # if we want to initialise the network with weights previously saved
     self.specF['create_a_specific_network'] = spec.get('create_a_specific_network',False) # if we want save weights in order to run later the model with the same network
-    self.specF['path_for_same_network'] = spec.get('path_for_same_network',self.specF['name_simu']+'/network') # path for the weights
+    self.specF['path_for_same_network'] = spec.get('path_for_same_network',self.specF['name_simu']+'/network.npz') # path for the weights
 
     # Stimulation
     self.specF['specific_load'] = spec.get('specific_load',False) # whether to use a specific load for all trials, or having it random
@@ -79,6 +80,7 @@ class FlexibleWM:
     self.specF['plot_raster'] = spec.get('plot_raster',True)   # plot a raster
     self.specF['path_to_save'] = self.define_path_to_save_results_from_the_trial()
     self.specF['path_sim'] = self.specF['path_to_save']+'simulation_results.npz'
+    self.specF['path_psth'] = self.specF['path_to_save']+'simulation_psth.npz'
 
 
 
@@ -90,6 +92,7 @@ class FlexibleWM:
       except OSError:
         pass
     return path_to_save
+
 
   def apply_matFuncMask(self, m, target, mask, axis_ziou): 
     for i in range(m.shape[0]) :
@@ -125,10 +128,14 @@ class FlexibleWM:
       difference_angle2 = numpy.angle(difference_complex)
       return difference_angle2
 
+
   def ml_decode(self,number_of_spikes_rn,Matrix_tc) :
+    # Input: psth_rn of the specfic pool; tuning matrix (standard)
+    # Returns: index of the most possible stimuli (i.e. remembered stiluli)
     Matrix_likelihood_per_stim = numpy.zeros(self.specF['N_sensory'])
-    for index_stim in range(self.specF['N_sensory']) :
+    for index_stim in range(self.specF['N_sensory']) : # loop over all possible stimuli
       Matrix_likelihood_per_stim[index_stim] = numpy.dot(number_of_spikes_rn,numpy.log(Matrix_tc[:,index_stim]))
+      # ipdb.set_trace()
     S_ml = numpy.argmax(Matrix_likelihood_per_stim)
     if isinstance(S_ml, numpy.ndarray) :
       pdb.set_trace()
@@ -236,7 +243,6 @@ class FlexibleWM:
         print("Network is saved in the folder, next time you can include 'same_network_to_use':True to reuse it")
       else :
         return Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2
-
 
   def run_a_trial(self) : 
     numpy.random.seed()
@@ -433,10 +439,14 @@ class FlexibleWM:
         time_matrix[index] = S_rn.t[index]
 
       psth_rn = self.compute_psth_for_mldecoding(time_matrix,S_rn.i,End_of_delay,self.specF['decode_spikes_timestep'])[:,int(round(End_of_delay/self.specF['decode_spikes_timestep']))-1]
+      # ipdb.set_trace()
       for index_pool in range(self.specF['N_sensory_pools']) :
         Results_ml_spikes[index_simulation,index_pool] = self.ml_decode(psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']],Matrix_tuning)
+        # ipdb.set_trace()
         if numpy.isnan(InputCenter[index_pool])==False : # or index_pool in Matrix_pools_receiving_inputs
+          
           Drift_from_ml_spikes[index_simulation,index_pool] = self.compute_drift(Results_ml_spikes[index_simulation,index_pool],InputCenter[index_pool])
+          # ipdb.set_trace()
 
       print('Initial inputs were (nan means no initial input into this SN)')
       print(Matrix_initial_input[index_simulation,:])
@@ -475,6 +485,171 @@ class FlexibleWM:
     return 
 
 
+  def find_tuning_curve(self) : 
+    numpy.random.seed()
+    gcPython.enable()
+    # --------------------------------- Network parameters ---------------------------------------------------------
+    # Setting the simulation timestep
+    defaultclock.dt = self.specF['clock']*ms     # this will be used by all objects that do not explicitly specify a clock or dt value during construction
+    # Setting the simulation time
+    Simtime = self.specF['simtime']*second
+    activity_threshold = 3
+    fI_slope = self.specF['fI_slope']
+
+    # Parameters of the neurons
+    bias = 0  # bias in the firing response (cf page 1 right column of Burak, Fiete 2012)
+
+    # Parameters of the synapses
+    RecSynapseTau = self.specF['RecSynapseTau']*second
+    RndSynapseTau = self.specF['RecSynapseTau']*second
+    InitSynapseRange = 0.01    # Range to randomly initialize synaptic variables
+
+    # --------------------------------- Network setting and equations ---------------------------------------------------------
+    Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2 = self.initialize_weights()
+
+    # Equations
+    eqs_rec = '''
+    dS_rec/dt = -S_rec/RecSynapseTau      :1
+    S_ext : 1
+    G_rec = S_rec + bias + S_ext  :1
+    rate_rec = 0.4*(1+tanh(fI_slope*G_rec-3))/RecSynapseTau     :Hz
+    '''
+
+    eqs_rcn = '''
+    dS_rnd/dt = -S_rnd/RndSynapseTau      :1
+    S_ext_rnd : 1
+    G_rnd = S_rnd + bias + S_ext_rnd  :1 
+    rate_rnd = 0.4*(1+tanh(fI_slope*G_rnd-3))/RndSynapseTau  :Hz
+    '''
 
 
+    # Creation of the network
+    Recurrent_Pools = NeuronGroup(self.specF['N_sensory']*self.specF['N_sensory_pools'], eqs_rec, threshold='rand()<rate_rec*dt')
+    Recurrent_Pools.S_rec = 'InitSynapseRange*rand()'   # What this does is initialise each neuron with a different uniform random value between 0 and InitSynapseRange
 
+    RCN_pool = NeuronGroup(self.specF['N_random'], eqs_rcn, threshold='rand()<rate_rnd*dt')
+    RCN_pool.S_rnd = 'InitSynapseRange*rand()'
+
+    # Building the recurrent connections within pools
+    Rec_RN_RN = Synapses(Recurrent_Pools, Recurrent_Pools, model='w : 1', on_pre='S_rec+=w')  # Defining the synaptic model, w is the synapse-specific weight
+    Rec_RN_RN.connect()  # connect all to all
+
+    Rec_RN_RN.w = Intermed_matrix_rn_rn2
+
+    if self.specF['with_random_network'] :
+      # Building the symmetric recurrent connections from RN to RCN and from RCN to RN 
+      Rec_RCN_RN = Synapses(RCN_pool, Recurrent_Pools, model='w : 1', on_pre='S_rec+=w')
+      Rec_RCN_RN.connect()  # connect all to all
+
+      Rec_RCN_RN.w = Intermed_matrix_rcn_to_rn2
+
+      Rec_RN_RCN = Synapses(Recurrent_Pools, RCN_pool, model='w : 1', on_pre='S_rnd+=w')
+      Rec_RN_RCN.connect()   # connect all to all
+
+      Rec_RN_RCN.w = Intermed_matrix_rn_to_rcn2
+
+    R_rn = StateMonitor(Recurrent_Pools, 'rate_rec', record=True, dt=self.specF['window_save_data']*second)
+
+    if self.specF['plot_raster'] :
+      S_rn = SpikeMonitor(Recurrent_Pools)
+      if self.specF['with_random_network'] :
+        S_rcn = SpikeMonitor(RCN_pool)
+
+    
+    # STORE THE NETWORK, in case we run a large number of simulations with the same network
+    store('initialized')
+
+    # We build the baseline, random input (set to 0 for now)
+    InputBaseline = 0; # strength of random inputs
+    inp_baseline = numpy.zeros((self.specF['N_sensory_pools'],self.specF['N_sensory']))
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      inp_baseline[index_pool,:] = InputBaseline*numpy.random.rand(self.specF['N_sensory'])
+
+    inp_baseline_rnd = numpy.zeros(self.specF['N_random'])
+    
+
+    
+    num_stimuli = 5
+    num_trials = self.specF['Number_of_trials']
+    psth_all = numpy.zeros((self.specF['Number_of_trials'],num_stimuli,self.specF['N_sensory'])) # spikes count in 100ms. (trials, stimuli, neurons in the pool)
+    stimuli_list = np.linspace(0, self.specF['N_sensory'], num_stimuli, dtype=int)
+    for index_simulation in range(self.specF['Number_of_trials']) :
+      print("---------- Initialisation of trial "+str(index_simulation)+' ----------')
+
+      for idx in range(len(stimuli_list)):
+        restore('initialized') # restore the initial network, in case trial number is > 1
+        numpy.random.seed()
+
+        # --------------------------------- Inputs ---------------------------------------------------------
+        #Input vector into sensory network
+        index_stimuli = stimuli_list[idx]
+        print(f'{idx+1}/{num_stimuli} stimulis in trial {index_simulation+1}/{num_trials}')
+        # ipdb.set_trace()
+        InputCenter = numpy.ones(self.specF['N_sensory_pools']) * index_stimuli
+
+        # For now we implement the input at the same time for all pools
+        IT1 = self.specF['start_stimulation']*second
+        IT2 = self.specF['end_stimulation']*second
+      
+        Matrix_pools_receiving_inputs = []
+        # load = 1 # FInd tuning curve for 1 load case
+        # Matrix_pools = numpy.arange(self.specF['N_sensory_pools'])
+        # numpy.random.shuffle(Matrix_pools)
+        Matrix_pools_receiving_inputs = [0] # Only applt stimuli to the first ring net
+        # print("Load for this trial is "+str(load))
+      
+        # We build inp_vect, a matrix which gives the stimulus input to each SN
+        inp_vect = numpy.zeros((self.specF['N_sensory_pools'],self.specF['N_sensory']))
+        for index_pool in Matrix_pools_receiving_inputs :
+          inp_vect[index_pool,:] = self.give_input_stimulus(InputCenter[index_pool])  
+          print('input center', InputCenter)
+        # --------------------------------- Running and recording ---------------------------------------------------------
+
+
+        # Running
+        print("Running...")
+        for index_pool in range(self.specF['N_sensory_pools']) :
+          Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+        if self.specF['with_random_network'] :
+          RCN_pool.S_ext_rnd = inp_baseline_rnd
+        run(IT1) 
+        
+        for index_pool in range(self.specF['N_sensory_pools']) :
+          if index_pool in Matrix_pools_receiving_inputs :
+            Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool] + inp_vect[index_pool]
+          else :
+            Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+        if self.specF['with_random_network'] :
+          RCN_pool.S_ext_rnd = inp_baseline_rnd
+        run(IT2-IT1)
+
+        for index_pool in range(self.specF['N_sensory_pools']) :
+          Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+        if self.specF['with_random_network'] :
+          RCN_pool.S_ext_rnd = inp_baseline_rnd
+        run(Simtime-IT2)
+        
+        # RESULTS
+        End_of_delay = self.specF['simtime']-self.specF['window_save_data']
+        Time_chosen = int(round(End_of_delay/self.specF['window_save_data']))       
+        R_rn_enddelay = numpy.transpose(R_rn.rate_rec[:,Time_chosen].copy())  # beware numpy.transpose is reference
+        # Matrix_abs, Matrix_angle = self.compute_activity_vector(R_rn_enddelay)
+
+        # ipdb.set_trace()
+        # S_rn.t is in second, we need to get rid of the unit time in order to compare it to timestep in the function compute_psth
+        time_matrix = numpy.zeros(S_rn.t.shape[0])
+        for index in range(S_rn.t.shape[0]) :
+          time_matrix[index] = S_rn.t[index]
+
+        psth_rn = self.compute_psth_for_mldecoding(time_matrix,S_rn.i,End_of_delay,self.specF['decode_spikes_timestep'])[:,int(round(End_of_delay/self.specF['decode_spikes_timestep']))-1]
+        index_pool = 0
+        # ipdb.set_trace()
+        print('location: ',index_simulation,idx)
+        psth_all[index_simulation,idx] = psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]
+
+    # saving  
+    numpy.savez_compressed(self.specF['path_psth'], psth_all=psth_all,stimuli_list=stimuli_list)
+    print("All results saved in the folder")
+    gcPython.collect()
+    
+    return 
