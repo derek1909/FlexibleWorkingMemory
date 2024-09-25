@@ -66,13 +66,12 @@ class FlexibleWM:
     self.specF['factor'] = spec.get('factor',1000) # factor for computing weights values (see Methods of the paper)
 
     # Saving/Using or not a pre-saved network
-    self.specF['same_network_to_use'] = spec.get('same_network_to_use',False) # if we want to initialise the network with weights previously saved
-    self.specF['create_a_specific_network'] = spec.get('create_a_specific_network',False) # if we want save weights in order to run later the model with the same network
+    self.specF['same_network_to_use'] = spec.get('same_network_to_use',False) # if we want to initialise the network with weights previously saved. If no previous network, create one and save it.
     self.specF['path_for_same_network'] = spec.get('path_for_same_network',self.specF['name_simu']+'/network.npz') # path for the weights
 
     # Stimulation
     self.specF['specific_load'] = spec.get('specific_load',False) # whether to use a specific load for all trials, or having it random
-    self.specF['value_of_specific_load'] = spec.get('value_of_specific_load',1) # value of the load if specific_load is True
+    self.specF['number_of_specific_load'] = spec.get('number_of_specific_load',None) # number of the load. random number of load if == None
     self.specF['start_stimulation'] = spec.get('start_stimulation',0.1)
     self.specF['end_stimulation'] = spec.get('end_stimulation',0.2)
     self.specF['input_strength'] = spec.get('input_strength',10) # strength of the stimulation
@@ -189,6 +188,16 @@ class FlexibleWM:
         Matrix[spike_matrix[index_tab],Time_integer]+=1
     return Matrix
   
+
+  def import_weights(self):
+      weight_data = numpy.load(self.specF['path_for_same_network'])
+      Intermed_matrix_rn_rn2 = weight_data['Intermed_matrix_rn_rn2']
+      Intermed_matrix_rn_to_rcn2 = weight_data['Intermed_matrix_rn_to_rcn2']
+      Intermed_matrix_rcn_to_rn2 = weight_data['Intermed_matrix_rcn_to_rn2']
+      weight_data.close()
+      return Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2
+  
+
   def initialize_weights(self, index_simulation=None) :
     # if index_simulation == None:
     #   print(f'Initializing the weights of the network that will be used for all trials')
@@ -196,77 +205,68 @@ class FlexibleWM:
     #   print(f'Initializing the weights of the network that will be used for trial {index_simulation}')
     
     numpy.random.seed()
-    if self.specF['same_network_to_use'] :
-      weight_data = numpy.load(self.specF['path_for_same_network'])
-      Intermed_matrix_rn_rn2 = weight_data['Intermed_matrix_rn_rn2']
-      Intermed_matrix_rn_to_rcn2 = weight_data['Intermed_matrix_rn_to_rcn2']
-      Intermed_matrix_rcn_to_rn2 = weight_data['Intermed_matrix_rcn_to_rn2']
-      weight_data.close()
-      return Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2
-    else : 
-      RecToRndW_EIBalance = self.specF['eibalance_ff'];
-      RecToRndW_Baseline = 0; #baseline weight from recurrent network to random network, regardless of connection existing
-      RndToRecW_EIBalance = self.specF['eibalance_fb'];
-      RndToRecW_Baseline = 0;  # baseline weight from random network to recurrent network, regardless of connection existing
-      RndWBaseline = 0;  # Baseline inhibition between neurons in random network
-      RndWSelf = 0; # Self-excitation in random network
-      PoolWBaseline = 0; # baseline weight between recurrent pools (scaled for # of neurons)
-      PoolWRandom = 0; # +/- range of random weights between recurrent pools (scaled for # of neurons)
-      # Connection matrix for RN to RN
-      Angle = 2.*math.pi*numpy.arange(1,self.specF['N_sensory']+1)/float(self.specF['N_sensory'])
-      def weight_intrapool(i) :
-        return self.specF['RecWBaseline'] + self.specF['RecWAmp_exc']*exp(self.specF['RecWPositiveWidth']*(cos(i)-1)) - self.specF['RecWAmp_inh']*exp(self.specF['RecWNegativeWidth']*(cos(i)-1)) 
 
-      Matrix_weight_intrapool = numpy.zeros((self.specF['N_sensory'],self.specF['N_sensory']))
-      for index1 in range(self.specF['N_sensory']) :
-        for index2 in range(self.specF['N_sensory']) :
-          if index1 == index2 and self.specF['self_excitation']==False :
-            Matrix_weight_intrapool[index1,index2] = 0
-          else :
-            Matrix_weight_intrapool[index1,index2] = weight_intrapool(Angle[index1]-Angle[index2])
+    RecToRndW_EIBalance = self.specF['eibalance_ff'];
+    RecToRndW_Baseline = 0; #baseline weight from recurrent network to random network, regardless of connection existing
+    RndToRecW_EIBalance = self.specF['eibalance_fb'];
+    RndToRecW_Baseline = 0;  # baseline weight from random network to recurrent network, regardless of connection existing
+    RndWBaseline = 0;  # Baseline inhibition between neurons in random network
+    RndWSelf = 0; # Self-excitation in random network
+    PoolWBaseline = 0; # baseline weight between recurrent pools (scaled for # of neurons)
+    PoolWRandom = 0; # +/- range of random weights between recurrent pools (scaled for # of neurons)
+    # Connection matrix for RN to RN
+    Angle = 2.*math.pi*numpy.arange(1,self.specF['N_sensory']+1)/float(self.specF['N_sensory'])
+    def weight_intrapool(i) :
+      return self.specF['RecWBaseline'] + self.specF['RecWAmp_exc']*exp(self.specF['RecWPositiveWidth']*(cos(i)-1)) - self.specF['RecWAmp_inh']*exp(self.specF['RecWNegativeWidth']*(cos(i)-1)) 
 
-      Intermed_matrix_rn_rn = (PoolWBaseline + PoolWRandom*2*(numpy.random.rand(self.specF['N_sensory_pools']*self.specF['N_sensory'], self.specF['N_sensory_pools']*self.specF['N_sensory']) - 0.5))/(self.specF['N_sensory']*(self.specF['N_sensory_pools']-1))
-      for index_pool in range(self.specF['N_sensory_pools']) :
-        Intermed_matrix_rn_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory'],index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]=Matrix_weight_intrapool[:,:]
+    Matrix_weight_intrapool = numpy.zeros((self.specF['N_sensory'],self.specF['N_sensory']))
+    for index1 in range(self.specF['N_sensory']) :
+      for index2 in range(self.specF['N_sensory']) :
+        if index1 == index2 and self.specF['self_excitation']==False :
+          Matrix_weight_intrapool[index1,index2] = 0
+        else :
+          Matrix_weight_intrapool[index1,index2] = weight_intrapool(Angle[index1]-Angle[index2])
 
-      Intermed_matrix_rn_rn2 = Intermed_matrix_rn_rn.flatten()  #http://brian2.readthedocs.io/en/stable/introduction/brian1_to_2/synapses.html#weight-matrices
+    Intermed_matrix_rn_rn = (PoolWBaseline + PoolWRandom*2*(numpy.random.rand(self.specF['N_sensory_pools']*self.specF['N_sensory'], self.specF['N_sensory_pools']*self.specF['N_sensory']) - 0.5))/(self.specF['N_sensory']*(self.specF['N_sensory_pools']-1))
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      Intermed_matrix_rn_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory'],index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]=Matrix_weight_intrapool[:,:]
 
-      if self.specF['with_random_network'] :
-        Matrix_Sym = numpy.random.rand(self.specF['N_sensory']*self.specF['N_sensory_pools'],self.specF['N_random'])
-        Matrix_Sym = Matrix_Sym < self.specF['RndRec_f']
+    Intermed_matrix_rn_rn2 = Intermed_matrix_rn_rn.flatten()  #http://brian2.readthedocs.io/en/stable/introduction/brian1_to_2/synapses.html#weight-matrices
 
-        Matrix_co_rn_to_rcn = RecToRndW_Baseline*numpy.ones((self.specF['N_sensory_pools']*self.specF['N_sensory'],self.specF['N_random']))
-        Intermed_matrix_rn_to_rcn = self.apply_matFuncMask(Matrix_co_rn_to_rcn, self.specF['RecToRndW_TargetFR'] , Matrix_Sym,True)
-        
+    if self.specF['with_random_network'] :
+      Matrix_Sym = numpy.random.rand(self.specF['N_sensory']*self.specF['N_sensory_pools'],self.specF['N_random'])
+      Matrix_Sym = Matrix_Sym < self.specF['RndRec_f']
 
-        Matrix_co_rcn_to_rn = RndToRecW_Baseline*numpy.ones((self.specF['N_random'],self.specF['N_sensory_pools']*self.specF['N_sensory']))
-        Intermed_matrix_rcn_to_rn = self.apply_matFuncMask(Matrix_co_rcn_to_rn.T, self.specF['RndToRecW_TargetFR'] , Matrix_Sym, False).T
+      Matrix_co_rn_to_rcn = RecToRndW_Baseline*numpy.ones((self.specF['N_sensory_pools']*self.specF['N_sensory'],self.specF['N_random']))
+      Intermed_matrix_rn_to_rcn = self.apply_matFuncMask(Matrix_co_rn_to_rcn, self.specF['RecToRndW_TargetFR'] , Matrix_Sym,True)
+      
 
-        # Balance and then flatten
-        for index_control_neuron in range(self.specF['N_random']) :
-          Sum_of_excitation = numpy.sum(Intermed_matrix_rn_to_rcn[:,index_control_neuron])
-          Intermed_matrix_rn_to_rcn[:,index_control_neuron]+=self.specF['eibalance_ff']*Sum_of_excitation/float(self.specF['N_sensory']*self.specF['N_sensory_pools'])
-        Intermed_matrix_rn_to_rcn2 = Intermed_matrix_rn_to_rcn.flatten()   
+      Matrix_co_rcn_to_rn = RndToRecW_Baseline*numpy.ones((self.specF['N_random'],self.specF['N_sensory_pools']*self.specF['N_sensory']))
+      Intermed_matrix_rcn_to_rn = self.apply_matFuncMask(Matrix_co_rcn_to_rn.T, self.specF['RndToRecW_TargetFR'] , Matrix_Sym, False).T
 
-        for index_neuron in range(self.specF['N_sensory']*self.specF['N_sensory_pools']) :
-          Sum_of_excitation = numpy.sum(Intermed_matrix_rcn_to_rn[:,index_neuron])   # somme sur les 1024 control neurons
-          Intermed_matrix_rcn_to_rn[:,index_neuron]+=self.specF['eibalance_fb']*Sum_of_excitation/float(self.specF['N_random'])
-        Intermed_matrix_rcn_to_rn2 = Intermed_matrix_rcn_to_rn.flatten()
+      # Balance and then flatten
+      for index_control_neuron in range(self.specF['N_random']) :
+        Sum_of_excitation = numpy.sum(Intermed_matrix_rn_to_rcn[:,index_control_neuron])
+        Intermed_matrix_rn_to_rcn[:,index_control_neuron]+=self.specF['eibalance_ff']*Sum_of_excitation/float(self.specF['N_sensory']*self.specF['N_sensory_pools'])
+      Intermed_matrix_rn_to_rcn2 = Intermed_matrix_rn_to_rcn.flatten()   
 
-      else :
-        Intermed_matrix_rn_to_rcn = numpy.zeros((self.specF['N_sensory']*self.specF['N_sensory_pools'],self.specF['N_random']))
-        Intermed_matrix_rn_to_rcn2 = Intermed_matrix_rn_to_rcn.flatten()  
-        Intermed_matrix_rcn_to_rn = numpy.zeros((self.specF['N_random'],self.specF['N_sensory_pools']*self.specF['N_sensory'])) 
-        Intermed_matrix_rcn_to_rn2 = Intermed_matrix_rcn_to_rn.flatten()
+      for index_neuron in range(self.specF['N_sensory']*self.specF['N_sensory_pools']) :
+        Sum_of_excitation = numpy.sum(Intermed_matrix_rcn_to_rn[:,index_neuron])   # somme sur les 1024 control neurons
+        Intermed_matrix_rcn_to_rn[:,index_neuron]+=self.specF['eibalance_fb']*Sum_of_excitation/float(self.specF['N_random'])
+      Intermed_matrix_rcn_to_rn2 = Intermed_matrix_rcn_to_rn.flatten()
 
-      # creating a specific network, saving, and plotting the weights
-      if self.specF['create_a_specific_network']  :
-        numpy.savez_compressed(self.specF['path_for_same_network'], Intermed_matrix_rn_rn2=Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2=Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2=Intermed_matrix_rcn_to_rn2)
-        print("Network is saved in the folder, next time you can include 'same_network_to_use':True to reuse it")
-      else :
-        return Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2
+    else :
+      Intermed_matrix_rn_to_rcn = numpy.zeros((self.specF['N_sensory']*self.specF['N_sensory_pools'],self.specF['N_random']))
+      Intermed_matrix_rn_to_rcn2 = Intermed_matrix_rn_to_rcn.flatten()  
+      Intermed_matrix_rcn_to_rn = numpy.zeros((self.specF['N_random'],self.specF['N_sensory_pools']*self.specF['N_sensory'])) 
+      Intermed_matrix_rcn_to_rn2 = Intermed_matrix_rcn_to_rn.flatten()
 
-  def run_a_trial(self, index_simulation, stimuli_list):
+    # creating a specific network, saving, and plotting the weights
+    numpy.savez_compressed(self.specF['path_for_same_network'], Intermed_matrix_rn_rn2=Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2=Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2=Intermed_matrix_rcn_to_rn2)
+    print("Network is saved in the folder, next time you can include 'same_network_to_use':True to reuse it")
+    return 
+
+  def run_a_trial(self, index_simulation, stimuli_grid):
 
     numpy.random.seed()
     # gcPython.enable()
@@ -287,7 +287,7 @@ class FlexibleWM:
     InitSynapseRange = 0.01    # Range to randomly initialize synaptic variables
 
     # --------------------------------- Network setting and equations ---------------------------------------------------------
-    Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2 = self.initialize_weights(index_simulation=index_simulation)
+    Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2 = self.import_weights()
 
     # Equations
     eqs_rec = '''
@@ -349,16 +349,16 @@ class FlexibleWM:
     inp_baseline_rnd = numpy.zeros(self.specF['N_random'])
 
     # The final result of this trial
-    psth_rn_trial = numpy.zeros((len(stimuli_list),self.specF['N_sensory'])) # spikes count in 100ms. (stimuli, neurons in each ring network)
-    psth_rcn_trial = numpy.zeros((len(stimuli_list),self.specF['N_random'])) # spikes count in 100ms. (stimuli, neurons in the random network)
+    psth_rn_trial = numpy.zeros((len(stimuli_grid),self.specF['N_sensory'])) # spikes count in 100ms. (stimuli, neurons in each ring network)
+    psth_rcn_trial = numpy.zeros((len(stimuli_grid),self.specF['N_random'])) # spikes count in 100ms. (stimuli, neurons in the random network)
 
-    for idx in tqdm(range(len(stimuli_list)), desc="Inner Loop (stimuli)", leave=False):
-    # for idx in range(len(stimuli_list)):
+    for idx in tqdm(range(len(stimuli_grid)), desc="Inner Loop (stimuli)", leave=False):
+    # for idx in range(len(stimuli_grid)):
       restore(f'initialized_{index_simulation}')  # restore the initial network state for each stimuli
       numpy.random.seed()  # Set random seed for each process
       gcPython.enable()
       # Inputs
-      index_stimuli = stimuli_list[idx]
+      index_stimuli = stimuli_grid[idx]
       InputCenter = numpy.ones(self.specF['N_sensory_pools']) * index_stimuli
       IT1 = self.specF['start_stimulation'] * second
       IT2 = self.specF['end_stimulation'] * second
@@ -417,20 +417,23 @@ class FlexibleWM:
   def find_tuning_curve(self) : 
     num_stimuli = self.specF['num_stimuli_gird']
     num_trials = self.specF['Number_of_trials']
-    stimuli_list = np.linspace(0, self.specF['N_sensory'], num_stimuli, dtype=int)
-    psth_rn = numpy.zeros((num_trials, len(stimuli_list), self.specF['N_sensory']))
-    psth_rcn = numpy.zeros((num_trials, len(stimuli_list), self.specF['N_random']))
+    stimuli_grid = np.linspace(0, self.specF['N_sensory'], num_stimuli, dtype=int)
+    psth_rn = numpy.zeros((num_trials, len(stimuli_grid), self.specF['N_sensory']))
+    psth_rcn = numpy.zeros((num_trials, len(stimuli_grid), self.specF['N_random']))
+
+    if not (self.specF['same_network_to_use'] and os.path.exists(self.specF['path_for_same_network'])):
+      self.initialize_weights()
 
     if self.specF['num_cores'] == 1:
       for index_simulation in tqdm(range(num_trials), desc="Outer Loop (trials)"):
-        psth_rn_trial,psth_rcn_trial,index_simulation = self.run_a_trial(index_simulation, stimuli_list)
+        psth_rn_trial,psth_rcn_trial,index_simulation = self.run_a_trial(index_simulation, stimuli_grid)
         psth_rn[index_simulation, :, :] = psth_rn_trial
         psth_rcn[index_simulation, :, :] = psth_rcn_trial
         gcPython.collect()
 
     elif self.specF['num_cores'] > 1:
       with ProcessPoolExecutor(max_workers=self.specF['num_cores']) as executor:
-        futures = [executor.submit(self.run_a_trial, index_simulation, stimuli_list) for index_simulation in range(num_trials)]
+        futures = [executor.submit(self.run_a_trial, index_simulation, stimuli_grid) for index_simulation in range(num_trials)]
         for future in tqdm(as_completed(futures), total=num_trials, desc="Outer Loop (trials)"):
         # for future in as_completed(futures):
           result = future.result() 
@@ -441,7 +444,7 @@ class FlexibleWM:
       error
 
     # saving  
-    numpy.savez_compressed(self.specF['path_psth'],psth_rn=psth_rn,psth_rcn=psth_rcn,stimuli_list=stimuli_list)
+    numpy.savez_compressed(self.specF['path_psth'],psth_rn=psth_rn,psth_rcn=psth_rcn,stimuli_grid=stimuli_grid)
     print("All results saved in the folder")
     gcPython.collect()
     
