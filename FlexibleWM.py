@@ -180,6 +180,15 @@ class FlexibleWM:
         Matrix[spike_matrix[index_tab],Time_integer]+=1
     return Matrix
 
+  def compute_psth_for_rcn(self,time_matrix,spike_matrix,End_of_delay,timestep) : #random connected network
+    time_length = int(round(End_of_delay/timestep))
+    Matrix = numpy.zeros((self.specF['N_random'],time_length))
+    for index_tab in range(time_matrix.shape[0]) :
+      if time_matrix[index_tab]<End_of_delay :
+        Time_integer = int(floor(time_matrix[index_tab]*1/timestep))
+        Matrix[spike_matrix[index_tab],Time_integer]+=1
+    return Matrix
+  
   def initialize_weights(self, index_simulation=None) :
     # if index_simulation == None:
     #   print(f'Initializing the weights of the network that will be used for all trials')
@@ -320,7 +329,7 @@ class FlexibleWM:
 
       Rec_RN_RCN.w = Intermed_matrix_rn_to_rcn2
 
-    R_rn = StateMonitor(Recurrent_Pools, 'rate_rec', record=True, dt=self.specF['window_save_data']*second)
+    # R_rn = StateMonitor(Recurrent_Pools, 'rate_rec', record=True, dt=self.specF['window_save_data']*second)
 
     if self.specF['plot_raster'] :
       S_rn = SpikeMonitor(Recurrent_Pools)
@@ -340,12 +349,12 @@ class FlexibleWM:
     inp_baseline_rnd = numpy.zeros(self.specF['N_random'])
 
     # The final result of this trial
-    psth_trial = numpy.zeros((len(stimuli_list),self.specF['N_sensory'])) # spikes count in 100ms. (stimuli, neurons in the pool)
+    psth_rn_trial = numpy.zeros((len(stimuli_list),self.specF['N_sensory'])) # spikes count in 100ms. (stimuli, neurons in each ring network)
+    psth_rcn_trial = numpy.zeros((len(stimuli_list),self.specF['N_random'])) # spikes count in 100ms. (stimuli, neurons in the random network)
 
-    # ipdb.set_trace()
     for idx in tqdm(range(len(stimuli_list)), desc="Inner Loop (stimuli)", leave=False):
     # for idx in range(len(stimuli_list)):
-      restore(f'initialized_{index_simulation}')  # restore the initial network for each trial
+      restore(f'initialized_{index_simulation}')  # restore the initial network state for each stimuli
       numpy.random.seed()  # Set random seed for each process
       gcPython.enable()
       # Inputs
@@ -384,35 +393,55 @@ class FlexibleWM:
 
       # Results calculation
       End_of_delay = self.specF['simtime'] - self.specF['window_save_data']
-      time_matrix = numpy.zeros(S_rn.t.shape[0])
-
+      time_matrix_rn = numpy.zeros(S_rn.t.shape[0])
       for index in range(S_rn.t.shape[0]):
-          time_matrix[index] = S_rn.t[index]
-      
-      psth_rn = self.compute_psth_for_mldecoding(time_matrix, S_rn.i, End_of_delay, self.specF['decode_spikes_timestep'])[:, int(round(End_of_delay / self.specF['decode_spikes_timestep'])) - 1]
-      psth_trial[idx] = psth_rn[0*self.specF['N_sensory']:(0+1)*self.specF['N_sensory']]
+          time_matrix_rn[index] = S_rn.t[index]
+
+      time_matrix_rcn = numpy.zeros(S_rcn.t.shape[0])
+      for index in range(S_rcn.t.shape[0]):
+          time_matrix_rcn[index] = S_rcn.t[index]
+
+      # ipdb.set_trace()
+      psth_rn = self.compute_psth_for_mldecoding(time_matrix_rn, S_rn.i, End_of_delay, self.specF['decode_spikes_timestep'])[:, int(round(End_of_delay / self.specF['decode_spikes_timestep'])) - 1]
+      psth_rcn = self.compute_psth_for_rcn(time_matrix_rcn, S_rcn.i, End_of_delay, self.specF['decode_spikes_timestep'])[:, int(round(End_of_delay / self.specF['decode_spikes_timestep'])) - 1]
+
+      idx_pool = Matrix_pools_receiving_inputs[0]
+      psth_rn_trial[idx] = psth_rn[idx_pool*self.specF['N_sensory']:(idx_pool+1)*self.specF['N_sensory']]
+      psth_rcn_trial[idx] = psth_rcn
       
       gcPython.collect()
 
-    return psth_trial, index_simulation
+    return psth_rn_trial, psth_rcn_trial, index_simulation
 
 
   def find_tuning_curve(self) : 
     num_stimuli = self.specF['num_stimuli_gird']
     num_trials = self.specF['Number_of_trials']
     stimuli_list = np.linspace(0, self.specF['N_sensory'], num_stimuli, dtype=int)
-    psth_all = numpy.zeros((num_trials, len(stimuli_list), self.specF['N_sensory']))
+    psth_rn = numpy.zeros((num_trials, len(stimuli_list), self.specF['N_sensory']))
+    psth_rcn = numpy.zeros((num_trials, len(stimuli_list), self.specF['N_random']))
 
-    with ProcessPoolExecutor(max_workers=self.specF['num_cores']) as executor:
-      futures = [executor.submit(self.run_a_trial, index_simulation, stimuli_list) for index_simulation in range(num_trials)]
-      for future in tqdm(as_completed(futures), total=num_trials, desc="Outer Loop (trials)"):
-      # for future in as_completed(futures):
-        result = future.result() 
-        psth_all[result[1], :, :] = result[0]
+    if self.specF['num_cores'] == 1:
+      for index_simulation in tqdm(range(num_trials), desc="Outer Loop (trials)"):
+        psth_rn_trial,psth_rcn_trial,index_simulation = self.run_a_trial(index_simulation, stimuli_list)
+        psth_rn[index_simulation, :, :] = psth_rn_trial
+        psth_rcn[index_simulation, :, :] = psth_rcn_trial
         gcPython.collect()
 
+    elif self.specF['num_cores'] > 1:
+      with ProcessPoolExecutor(max_workers=self.specF['num_cores']) as executor:
+        futures = [executor.submit(self.run_a_trial, index_simulation, stimuli_list) for index_simulation in range(num_trials)]
+        for future in tqdm(as_completed(futures), total=num_trials, desc="Outer Loop (trials)"):
+        # for future in as_completed(futures):
+          result = future.result() 
+          psth_rn[result[-1], :, :] = result[0]
+          psth_rcn[result[-1], :, :] = result[1]
+          gcPython.collect()
+    else:
+      error
+
     # saving  
-    numpy.savez_compressed(self.specF['path_psth'], psth_all=psth_all,stimuli_list=stimuli_list)
+    numpy.savez_compressed(self.specF['path_psth'],psth_rn=psth_rn,psth_rcn=psth_rcn,stimuli_list=stimuli_list)
     print("All results saved in the folder")
     gcPython.collect()
     
