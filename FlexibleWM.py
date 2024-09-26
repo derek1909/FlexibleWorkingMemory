@@ -19,7 +19,7 @@ import gc as gcPython
 import ipdb
 from tqdm.auto import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import itertools
 
 import logging
 logging.getLogger().setLevel(logging.WARNING)  # Set logging level to WARNING or ERROR to mute INFO messages
@@ -349,25 +349,41 @@ class FlexibleWM:
     inp_baseline_rnd = numpy.zeros(self.specF['N_random'])
 
     # The final result of this trial
-    psth_rn_trial = numpy.zeros((len(stimuli_grid),self.specF['N_sensory'])) # spikes count in 100ms. (stimuli, neurons in each ring network)
-    psth_rcn_trial = numpy.zeros((len(stimuli_grid),self.specF['N_random'])) # spikes count in 100ms. (stimuli, neurons in the random network)
+    if self.specF['number_of_specific_load'] == None :
+      load = numpy.random.randint(low=1,high=self.specF['N_sensory_pools']+1)
+    else:
+      load = self.specF['number_of_specific_load']
 
-    for idx in tqdm(range(len(stimuli_grid)), desc="Inner Loop (stimuli)", leave=False):
-    # for idx in range(len(stimuli_grid)):
+    shape_rn_trial = (len(stimuli_grid),) * load + (load,) + (self.specF['N_sensory'],)
+    shape_rcn_trial = (len(stimuli_grid),) * load + (self.specF['N_random'],)
+    psth_rn_trial = numpy.zeros(shape_rn_trial) # spikes count in 100ms. (stimuli1,stimuli2,...,loads, neurons in each ring network)
+    psth_rcn_trial = numpy.zeros(shape_rcn_trial) # spikes count in 100ms. (stimuli1,stimuli2, neurons in the random network)
+
+    Matrix_pools_receiving_inputs = []
+
+    Matrix_pools = numpy.arange(self.specF['N_sensory_pools'])
+    numpy.random.shuffle(Matrix_pools)
+    Matrix_pools_receiving_inputs = Matrix_pools[:load]
+    
+    for index_combination in tqdm(itertools.product(range(len(stimuli_grid)), repeat=load),total=len(stimuli_grid)**load, desc="Inner Loop (stimuli)"):
+      # ipdb.set_trace()
+
       restore(f'initialized_{index_simulation}')  # restore the initial network state for each stimuli
       numpy.random.seed()  # Set random seed for each process
       gcPython.enable()
       # Inputs
-      index_stimuli = stimuli_grid[idx]
-      InputCenter = numpy.ones(self.specF['N_sensory_pools']) * index_stimuli
+      # index_stimuli = [stimuli_grid[idx] for idx in index_combination]
+
       IT1 = self.specF['start_stimulation'] * second
       IT2 = self.specF['end_stimulation'] * second
 
-      Matrix_pools_receiving_inputs = [0]  # Only apply stimuli to the first ring net
+      InputCenter = numpy.zeros(self.specF['N_sensory_pools'])
+      InputCenter[Matrix_pools_receiving_inputs] = [stimuli_grid[idx] for idx in index_combination]
+
+      # inp_vect is a matrix which gives the stimulus input to each SN
       inp_vect = numpy.zeros((self.specF['N_sensory_pools'], self.specF['N_sensory']))
-      
       for index_pool in Matrix_pools_receiving_inputs:
-          inp_vect[index_pool, :] = self.give_input_stimulus(InputCenter[index_pool])  # Adjusted
+          inp_vect[index_pool, :] = self.give_input_stimulus(InputCenter[index_pool])
       
       # Running
       for index_pool in range(self.specF['N_sensory_pools']):
@@ -405,10 +421,10 @@ class FlexibleWM:
       psth_rn = self.compute_psth_for_mldecoding(time_matrix_rn, S_rn.i, End_of_delay, self.specF['decode_spikes_timestep'])[:, int(round(End_of_delay / self.specF['decode_spikes_timestep'])) - 1]
       psth_rcn = self.compute_psth_for_rcn(time_matrix_rcn, S_rcn.i, End_of_delay, self.specF['decode_spikes_timestep'])[:, int(round(End_of_delay / self.specF['decode_spikes_timestep'])) - 1]
 
-      idx_pool = Matrix_pools_receiving_inputs[0]
-      psth_rn_trial[idx] = psth_rn[idx_pool*self.specF['N_sensory']:(idx_pool+1)*self.specF['N_sensory']]
-      psth_rcn_trial[idx] = psth_rcn
-      
+      for idx in range(len(Matrix_pools_receiving_inputs)):
+        index_pool = Matrix_pools_receiving_inputs[idx]
+        psth_rn_trial[index_combination,idx] = psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]
+      psth_rcn_trial[index_combination] = psth_rcn
       gcPython.collect()
 
     return psth_rn_trial, psth_rcn_trial, index_simulation
@@ -420,6 +436,13 @@ class FlexibleWM:
     stimuli_grid = np.linspace(0, self.specF['N_sensory'], num_stimuli, dtype=int)
     psth_rn = numpy.zeros((num_trials, len(stimuli_grid), self.specF['N_sensory']))
     psth_rcn = numpy.zeros((num_trials, len(stimuli_grid), self.specF['N_random']))
+
+    # ipdb.set_trace()
+    load = self.specF['number_of_specific_load']
+    shape_rn = (num_trials,) + (len(stimuli_grid),) * load + (load,) + (self.specF['N_sensory'],)
+    shape_rcn = (num_trials,) + (len(stimuli_grid),) * load + (self.specF['N_random'],)
+    psth_rn = numpy.zeros(shape_rn) # spikes count in 100ms. (num_trials, stimuli1,stimuli2,...,loads, neurons in each ring network)
+    psth_rcn = numpy.zeros(shape_rcn) # spikes count in 100ms. (num_trials, stimuli1,stimuli2, neurons in the random network)
 
     if not (self.specF['same_network_to_use'] and os.path.exists(self.specF['path_for_same_network'])):
       self.initialize_weights()
@@ -448,4 +471,9 @@ class FlexibleWM:
     print("All results saved in the folder")
     gcPython.collect()
     
-    return 
+    return
+  
+
+
+
+
