@@ -359,16 +359,21 @@ class FlexibleWM:
       gcPython.enable()
       # Inputs
       index_stimuli = stimuli_grid[idx]
-      InputCenter = numpy.ones(self.specF['N_sensory_pools']) * index_stimuli
-      IT1 = self.specF['start_stimulation'] * second
-      IT2 = self.specF['end_stimulation'] * second
+      InputCenter = numpy.zeros(self.specF['N_sensory_pools'])
+      InputCenter[0] = index_stimuli
+      InputCenter[1] = self.specF['N_sensory']/2
+      InputCenter[2] = self.specF['N_sensory']/2
 
-      Matrix_pools_receiving_inputs = [0]  # Only apply stimuli to the first ring net
+      Matrix_pools_receiving_inputs = [0,1,2]  # Only apply stimuli to the first ring net
+
       inp_vect = numpy.zeros((self.specF['N_sensory_pools'], self.specF['N_sensory']))
-      
       for index_pool in Matrix_pools_receiving_inputs:
           inp_vect[index_pool, :] = self.give_input_stimulus(InputCenter[index_pool])  # Adjusted
       
+
+      IT1 = self.specF['start_stimulation'] * second
+      IT2 = self.specF['end_stimulation'] * second
+
       # Running
       for index_pool in range(self.specF['N_sensory_pools']):
           Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
