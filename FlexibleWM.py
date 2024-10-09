@@ -385,6 +385,8 @@ class FlexibleWM:
       for index_pool in Matrix_pools_receiving_inputs:
           inp_vect[index_pool, :] = self.give_input_stimulus(InputCenter[index_pool])
       
+      # ipdb.set_trace()
+
       # Running
       for index_pool in range(self.specF['N_sensory_pools']):
           Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
@@ -423,7 +425,9 @@ class FlexibleWM:
 
       for idx in range(len(Matrix_pools_receiving_inputs)):
         index_pool = Matrix_pools_receiving_inputs[idx]
-        psth_rn_trial[index_combination,idx] = psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]
+        # ipdb.set_trace()
+        psth_rn_trial[index_combination][idx] = psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']]
+
       psth_rcn_trial[index_combination] = psth_rcn
       gcPython.collect()
 
@@ -460,8 +464,8 @@ class FlexibleWM:
         for future in tqdm(as_completed(futures), total=num_trials, desc="Outer Loop (trials)"):
         # for future in as_completed(futures):
           result = future.result() 
-          psth_rn[result[-1], :, :] = result[0]
-          psth_rcn[result[-1], :, :] = result[1]
+          psth_rn[result[-1]] = result[0]
+          psth_rcn[result[-1]] = result[1]
           gcPython.collect()
     else:
       error
