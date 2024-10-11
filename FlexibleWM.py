@@ -359,10 +359,9 @@ class FlexibleWM:
       gcPython.enable()
       # Inputs
       index_stimuli = stimuli_grid[idx]
-      InputCenter = numpy.zeros(self.specF['N_sensory_pools']) + 0
-      InputCenter[0] = index_stimuli
-
-      Matrix_pools_receiving_inputs = [0,1,2]  # Only apply stimuli to the first ring net
+      InputCenter = numpy.zeros(self.specF['N_sensory_pools'])
+      Matrix_pools_receiving_inputs = np.random.choice(self.specF['N_sensory_pools'], size=self.specF['specific_load'], replace=False)
+      InputCenter[Matrix_pools_receiving_inputs[0]] = index_stimuli
 
       inp_vect = numpy.zeros((self.specF['N_sensory_pools'], self.specF['N_sensory']))
       for index_pool in Matrix_pools_receiving_inputs:
@@ -430,8 +429,8 @@ class FlexibleWM:
     if self.specF['num_cores'] == 1:
       for index_simulation in tqdm(range(num_trials), desc="Outer Loop (trials)"):
         psth_rn_trial,psth_rcn_trial,index_simulation = self.run_a_trial(index_simulation, stimuli_grid)
-        psth_rn[index_simulation, :, :] = psth_rn_trial
-        psth_rcn[index_simulation, :, :] = psth_rcn_trial
+        psth_rn[index_simulation] = psth_rn_trial
+        psth_rcn[index_simulation] = psth_rcn_trial
         gcPython.collect()
 
     elif self.specF['num_cores'] > 1:
@@ -440,8 +439,8 @@ class FlexibleWM:
         for future in tqdm(as_completed(futures), total=num_trials, desc="Outer Loop (trials)"):
         # for future in as_completed(futures):
           result = future.result() 
-          psth_rn[result[-1], :, :] = result[0]
-          psth_rcn[result[-1], :, :] = result[1]
+          psth_rn[result[-1]] = result[0]
+          psth_rcn[result[-1]] = result[1]
           gcPython.collect()
     else:
       error
