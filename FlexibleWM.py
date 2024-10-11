@@ -124,6 +124,40 @@ class FlexibleWM:
       R_rn_3 = numpy.mean(R_rn_2[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']])
       Matrix_angle_timed[index_pool] = numpy.angle(R_rn_3)*self.specF['N_sensory']/(2*math.pi)
       Matrix_abs_timed[index_pool] = numpy.absolute(R_rn_3)
+
+      ## To visualise Activity Vector Calculation ##
+      '''
+      # Get real and imaginary parts
+      real_parts = R_rn_2.real
+      imag_parts = R_rn_2.imag
+
+      # Create a figure and axis
+      plt.figure(figsize=(6, 6))
+      plt.axhline(0, color='black',linewidth=0.5)  # x-axis
+      plt.axvline(0, color='black',linewidth=0.5)  # y-axis
+
+      # Plot the complex numbers
+      plt.scatter(real_parts, imag_parts, color='blue',s=1,label='sensory neuron firing rate vector')
+      plt.scatter( R_rn_3.real, R_rn_3.real, color='red',s=5, label='ring activity vector')
+
+      # # Add labels and title
+      # for i, z in enumerate(R_rn_2):
+      #     plt.text(real_parts[i], imag_parts[i], f'{z}', fontsize=12, ha='right')
+
+      plt.xlabel('Real Part')
+      plt.ylabel('Imaginary Part')
+      plt.title('Example activity vector plots')
+
+      # Set equal scaling for both axes
+      plt.gca().set_aspect('equal', adjustable='box')
+
+      # Show the plot
+      plt.grid(True)
+      plt.legend()
+      plt.show()
+      error
+      '''
+
     Matrix_angle_timed[Matrix_angle_timed<0]+=self.specF['N_sensory']
     return Matrix_abs_timed, Matrix_angle_timed
 
@@ -428,7 +462,7 @@ class FlexibleWM:
 
     if self.specF['num_cores'] == 1:
       for index_simulation in tqdm(range(num_trials), desc="Outer Loop (trials)"):
-        psth_rn_trial,psth_rcn_trial,index_simulation = self.run_a_trial(index_simulation, stimuli_grid)
+        psth_rn_trial,psth_rcn_trial,index_simulation = self.run_input_sweep(index_simulation, stimuli_grid)
         psth_rn[index_simulation] = psth_rn_trial
         psth_rcn[index_simulation] = psth_rcn_trial
         gcPython.collect()
@@ -454,7 +488,60 @@ class FlexibleWM:
   
 
 
-  def run_a_trial(self) : 
+
+  def assess_memory_performance(self) : 
+
+    num_trials = self.specF['Number_of_trials']
+
+    Matrix_all_results = numpy.ones((self.specF['Number_of_trials'],2))*numpy.nan
+    Matrix_abs_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+    Matrix_angle_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+    Results_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+    Drift_from_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+    Matrix_initial_input = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+
+    if not (self.specF['same_network_to_use'] and os.path.exists(self.specF['path_for_same_network'])):
+      self.initialize_weights()
+
+    if self.specF['num_cores'] == 1:
+      for index_simulation in tqdm(range(num_trials), desc="Trials"):
+        result = self.run_a_sim(index_simulation)
+
+        Matrix_abs_all[index_simulation] = result[0]
+        Matrix_angle_all[index_simulation] = result[1]
+        Matrix_initial_input[index_simulation] = result[2]
+        Results_ml_spikes[index_simulation] = result[3]
+        Drift_from_ml_spikes[index_simulation] = result[4]
+        Matrix_all_results[index_simulation] = result[5]
+
+    elif self.specF['num_cores'] > 1:
+      with ProcessPoolExecutor(max_workers=self.specF['num_cores']) as executor:
+        futures = [executor.submit(self.run_a_sim, index_simulation) for index_simulation in range(num_trials)]
+        for future in tqdm(as_completed(futures), total=num_trials, desc="Trials"):
+        # for future in as_completed(futures):
+          result = future.result() 
+          index_simulation = result[-1]
+          # result = matrix_abs, matrix_angle, matrix_initial_input, results_ml_spikes, drift_from_ml_spikes, matrix_memory_results
+          Matrix_abs_all[index_simulation] = result[0]
+          Matrix_angle_all[index_simulation] = result[1]
+          Matrix_initial_input[index_simulation] = result[2]
+          Results_ml_spikes[index_simulation] = result[3]
+          Drift_from_ml_spikes[index_simulation] = result[4]
+          Matrix_all_results[index_simulation] = result[5]
+
+    else:
+      error
+
+    # saving  
+    numpy.savez_compressed(self.specF['path_sim'], Matrix_all_results=Matrix_all_results,Matrix_abs_all=Matrix_abs_all, Matrix_angle_all=Matrix_angle_all, Results_ml_spikes=Results_ml_spikes, Drift_from_ml_spikes=Drift_from_ml_spikes,Matrix_initial_input = Matrix_initial_input)
+    print("All results saved in the folder")
+    gcPython.collect()
+    
+    return 
+  
+
+
+  def run_a_sim(self, index_simulation) : 
     numpy.random.seed()
     gcPython.enable()
     # --------------------------------- Network parameters ---------------------------------------------------------
@@ -462,7 +549,7 @@ class FlexibleWM:
     defaultclock.dt = self.specF['clock']*ms     # this will be used by all objects that do not explicitly specify a clock or dt value during construction
     # Setting the simulation time
     Simtime = self.specF['simtime']*second
-    activity_threshold = 3
+    activity_threshold = 3 # 3Hz
     fI_slope = self.specF['fI_slope']
 
     # Parameters of the neurons
@@ -474,8 +561,6 @@ class FlexibleWM:
     InitSynapseRange = 0.01    # Range to randomly initialize synaptic variables
 
     # --------------------------------- Network setting and equations ---------------------------------------------------------
-    if not (self.specF['same_network_to_use'] and os.path.exists(self.specF['path_for_same_network'])):
-      self.initialize_weights()
     Intermed_matrix_rn_rn2, Intermed_matrix_rn_to_rcn2, Intermed_matrix_rcn_to_rn2 = self.import_weights()
 
     # Equations
@@ -492,7 +577,6 @@ class FlexibleWM:
     G_rnd = S_rnd + bias + S_ext_rnd  :1 
     rate_rnd = 0.4*(1+tanh(fI_slope*G_rnd-3))/RndSynapseTau  :Hz
     '''
-
 
     # Creation of the network
     Recurrent_Pools = NeuronGroup(self.specF['N_sensory']*self.specF['N_sensory_pools'], eqs_rec, threshold='rand()<rate_rec*dt')
@@ -521,17 +605,14 @@ class FlexibleWM:
 
     R_rn = StateMonitor(Recurrent_Pools, 'rate_rec', record=True, dt=self.specF['window_save_data']*second)
 
-    if self.specF['plot_raster'] :
-      S_rn = SpikeMonitor(Recurrent_Pools)
-      if self.specF['with_random_network'] :
-        S_rcn = SpikeMonitor(RCN_pool)
-
-
+    S_rn = SpikeMonitor(Recurrent_Pools)
+    if self.specF['plot_raster'] and self.specF['with_random_network'] :
+      S_rcn = SpikeMonitor(RCN_pool)
 
     # M = PopulationRateMonitor(RCN_pool)
     
     # STORE THE NETWORK, in case we run a large number of simulations with the same network
-    store('initialized')
+    # store(f'initialized_{index_simulation}')
 
     # We build the baseline, random input (set to 0 for now)
     InputBaseline = 0; # strength of random inputs
@@ -541,161 +622,127 @@ class FlexibleWM:
 
     inp_baseline_rnd = numpy.zeros(self.specF['N_random'])
 
-    Matrix_all_results = numpy.ones((self.specF['Number_of_trials'],2))*numpy.nan
-    Matrix_abs_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Matrix_angle_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Results_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Drift_from_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Matrix_initial_input = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
+    numpy.random.seed()
 
-    for index_simulation in range(self.specF['Number_of_trials']) :
-      print("---------- Initialisation of trial "+str(index_simulation)+' ----------')
-      restore('initialized') # restore the initial network, in case trial number is > 1
+    # --------------------------------- Inputs ---------------------------------------------------------
+    #Input vector into sensory network
+    InputCenter = numpy.floor(numpy.random.rand(self.specF['N_sensory_pools'])*self.specF['N_sensory'])   
+
+    # For now we implement the input at the same time for all pools
+    IT1 = self.specF['start_stimulation']*second
+    IT2 = self.specF['end_stimulation']*second
     
-      numpy.random.seed()
+    Matrix_pools_receiving_inputs = []
+    load = self.specF['specific_load']
 
-      # --------------------------------- Inputs ---------------------------------------------------------
-      #Input vector into sensory network
-      InputCenter = numpy.floor(numpy.random.rand(self.specF['N_sensory_pools'])*self.specF['N_sensory'])   
+    Matrix_pools = numpy.arange(self.specF['N_sensory_pools'])
+    numpy.random.shuffle(Matrix_pools)
+    Matrix_pools_receiving_inputs = Matrix_pools[:load]
+  
+    # We build inp_vect, a matrix which gives the stimulus input to each SN
+    matrix_initial_input = numpy.ones(self.specF['N_sensory_pools'])*numpy.nan
+    results_ml_spikes = numpy.ones(self.specF['N_sensory_pools'])*numpy.nan
+    drift_from_ml_spikes = numpy.ones(self.specF['N_sensory_pools'])*numpy.nan
 
-      # For now we implement the input at the same time for all pools
-      IT1 = self.specF['start_stimulation']*second
-      IT2 = self.specF['end_stimulation']*second
-      
-      Matrix_pools_receiving_inputs = []
-      load = self.specF['specific_load']
+    inp_vect = numpy.zeros((self.specF['N_sensory_pools'],self.specF['N_sensory']))
+    for index_pool in Matrix_pools_receiving_inputs :
+      inp_vect[index_pool,:] = self.give_input_stimulus(InputCenter[index_pool])  
+      matrix_initial_input[index_pool] = InputCenter[index_pool] 
 
-      Matrix_pools = numpy.arange(self.specF['N_sensory_pools'])
-      numpy.random.shuffle(Matrix_pools)
-      Matrix_pools_receiving_inputs = Matrix_pools[:load]
-      print("Load for this trial is "+str(load))
+
+    # --------------------------------- Running and recording ---------------------------------------------------------
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+    if self.specF['with_random_network'] :
+      RCN_pool.S_ext_rnd = inp_baseline_rnd
+    run(IT1) 
     
-      # We build inp_vect, a matrix which gives the stimulus input to each SN
-      inp_vect = numpy.zeros((self.specF['N_sensory_pools'],self.specF['N_sensory']))
-      for index_pool in Matrix_pools_receiving_inputs :
-        inp_vect[index_pool,:] = self.give_input_stimulus(InputCenter[index_pool])  
-        Matrix_initial_input[index_simulation,index_pool] = InputCenter[index_pool] 
-
-
-      # --------------------------------- Running and recording ---------------------------------------------------------
-
-
-      # Running
-      print("Running...")
-      for index_pool in range(self.specF['N_sensory_pools']) :
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      if index_pool in Matrix_pools_receiving_inputs :
+        Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool] + inp_vect[index_pool]
+      else :
         Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+    if self.specF['with_random_network'] :
+      RCN_pool.S_ext_rnd = inp_baseline_rnd
+    run(IT2-IT1)
+
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
+    if self.specF['with_random_network'] :
+      RCN_pool.S_ext_rnd = inp_baseline_rnd
+    run(Simtime-IT2)
+
+    if self.specF['plot_raster'] :
+      print("Plot of a raster into the folder ..")
       if self.specF['with_random_network'] :
-        RCN_pool.S_ext_rnd = inp_baseline_rnd
-      run(IT1) 
+        figure()
+        subplot(211)
+        plot_raster(S_rcn.i, S_rcn.t, time_unit=second, marker=',', color='k')
+        ylabel('Random neurons')
+        subplot(212)
+        plot_raster(S_rn.i, S_rn.t, time_unit=second, marker=',', color='k')
+        for index_sn in range(self.specF['N_sensory_pools']+1) :
+          plot(numpy.arange(0,self.specF['simtime']+self.specF['window_save_data']/2.,self.specF['window_save_data']),index_sn*self.specF['N_sensory']*numpy.ones(int(round(self.specF['simtime']/self.specF['window_save_data']))+1),color='b', linewidth=0.5)
+        ylabel('Sensory neurons')
+        savefig(self.specF['path_to_save']+'rasterplot_trial'+str(index_simulation)+'.png')
+        close()
+      else :
+        figure()
+        plot_raster(S_rn.i, S_rn.t, time_unit=second, marker=',', color='k')
+        for index_sn in range(self.specF['N_sensory_pools']+1) :
+          plot(numpy.arange(0,self.specF['simtime']+self.specF['window_save_data']/2.,self.specF['window_save_data']),index_sn*self.specF['N_sensory']*numpy.ones(int(round(self.specF['simtime']/self.specF['window_save_data']))+1),color='b', linewidth=0.5)
+        ylabel('Sensory neurons')
+        savefig(self.specF['path_to_save']+'rasterplot_trial'+str(index_simulation)+'.png')
+        close()
+      error
+
       
-      for index_pool in range(self.specF['N_sensory_pools']) :
-        if index_pool in Matrix_pools_receiving_inputs :
-          Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool] + inp_vect[index_pool]
+    # RESULTS
+    End_of_delay = self.specF['simtime']-self.specF['window_save_data']
+    Time_chosen = int(round(End_of_delay/self.specF['window_save_data']))       
+    R_rn_enddelay = numpy.transpose(R_rn.rate_rec[:,Time_chosen].copy())  # beware numpy.transpose is reference
+    matrix_abs, matrix_angle = self.compute_activity_vector(R_rn_enddelay)
+
+      
+    if self.specF['compute_tuning_curve'] :
+      Matrix_tuning = self.compute_matrix_tuning_sensory()
+      # print("Tuning curve is saved in the folder, next time you can include 'compute_tuning_curve':False to reuse it")
+
+
+    tuning_data = numpy.load(self.specF['path_load_matrix_tuning_sensory']) 
+    Matrix_tuning = tuning_data['Matrix_tuning']
+    tuning_data.close()
+
+    # S_rn.t is in second, we need to get rid of the unit time in order to compare it to timestep in the function compute_psth
+    time_matrix = numpy.zeros(S_rn.t.shape[0])
+    for index in range(S_rn.t.shape[0]) :
+      time_matrix[index] = S_rn.t[index]
+
+    psth_rn = self.compute_psth_for_mldecoding(time_matrix,S_rn.i,End_of_delay,self.specF['decode_spikes_timestep'])[:,int(round(End_of_delay/self.specF['decode_spikes_timestep']))-1]
+    for index_pool in range(self.specF['N_sensory_pools']) :
+      results_ml_spikes[index_pool] = self.ml_decode(psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']],Matrix_tuning)
+      if numpy.isnan(InputCenter[index_pool])==False : # or index_pool in Matrix_pools_receiving_inputs
+        drift_from_ml_spikes[index_pool] = self.compute_drift(results_ml_spikes[index_pool],InputCenter[index_pool])
+          
+
+    proba_maintained = 0
+    proba_spurious = 0
+    for index_pool_capacity in range(self.specF['N_sensory_pools']) :
+      if matrix_abs[index_pool_capacity]>activity_threshold :
+        if index_pool_capacity in Matrix_pools_receiving_inputs :
+          proba_maintained+=1
         else :
-          Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
-      if self.specF['with_random_network'] :
-        RCN_pool.S_ext_rnd = inp_baseline_rnd
-      run(IT2-IT1)
+          proba_spurious+=1
+    # print(str(proba_maintained)+' maintained memories')
+    # print(str(Matrix_pools_receiving_inputs.shape[0]-proba_maintained)+' forgotten memories')
+    # print(str(proba_spurious)+' spurious memories\n')
+    proba_maintained/=float(load)
+    if load!=self.specF['N_sensory_pools'] :
+      proba_spurious/=float(self.specF['N_sensory_pools']-load)
 
-      for index_pool in range(self.specF['N_sensory_pools']) :
-        Recurrent_Pools[self.specF['N_sensory']*index_pool:self.specF['N_sensory']*(index_pool+1)].S_ext = inp_baseline[index_pool]
-      if self.specF['with_random_network'] :
-        RCN_pool.S_ext_rnd = inp_baseline_rnd
-      run(Simtime-IT2)
-      
-      # figure()
-      # plot(M.t/ms, M.rate/Hz)
-      # error
-
-      if self.specF['plot_raster'] :
-        print("Plot of a raster into the folder ..")
-        if self.specF['with_random_network'] :
-          figure()
-          subplot(211)
-          plot_raster(S_rcn.i, S_rcn.t, time_unit=second, marker=',', color='k')
-          ylabel('Random neurons')
-          subplot(212)
-          plot_raster(S_rn.i, S_rn.t, time_unit=second, marker=',', color='k')
-          for index_sn in range(self.specF['N_sensory_pools']+1) :
-            plot(numpy.arange(0,self.specF['simtime']+self.specF['window_save_data']/2.,self.specF['window_save_data']),index_sn*self.specF['N_sensory']*numpy.ones(int(round(self.specF['simtime']/self.specF['window_save_data']))+1),color='b', linewidth=0.5)
-          ylabel('Sensory neurons')
-          savefig(self.specF['path_to_save']+'rasterplot_trial'+str(index_simulation)+'.png')
-          close()
-        else :
-          figure()
-          plot_raster(S_rn.i, S_rn.t, time_unit=second, marker=',', color='k')
-          for index_sn in range(self.specF['N_sensory_pools']+1) :
-            plot(numpy.arange(0,self.specF['simtime']+self.specF['window_save_data']/2.,self.specF['window_save_data']),index_sn*self.specF['N_sensory']*numpy.ones(int(round(self.specF['simtime']/self.specF['window_save_data']))+1),color='b', linewidth=0.5)
-          ylabel('Sensory neurons')
-          savefig(self.specF['path_to_save']+'rasterplot_trial'+str(index_simulation)+'.png')
-          close()
-
-      
-      # RESULTS
-      End_of_delay = self.specF['simtime']-self.specF['window_save_data']
-      Time_chosen = int(round(End_of_delay/self.specF['window_save_data']))       
-      R_rn_enddelay = numpy.transpose(R_rn.rate_rec[:,Time_chosen].copy())  # beware numpy.transpose is reference
-      Matrix_abs, Matrix_angle = self.compute_activity_vector(R_rn_enddelay)
-
-      Matrix_abs_all[index_simulation,:] = Matrix_abs
-      Matrix_angle_all[index_simulation,:] = Matrix_angle
-      if self.specF['compute_tuning_curve'] :
-        Matrix_tuning = self.compute_matrix_tuning_sensory()
-        print("Tuning curve is saved in the folder, next time you can include 'compute_tuning_curve':False to reuse it")
-
-
-      print("\n---------- ML decoding at the end of trial "+str(index_simulation)+' ----------')
-      tuning_data = numpy.load(self.specF['path_load_matrix_tuning_sensory']) 
-      Matrix_tuning = tuning_data['Matrix_tuning']
-      tuning_data.close()
-
-      # S_rn.t is in second, we need to get rid of the unit time in order to compare it to timestep in the function compute_psth
-      time_matrix = numpy.zeros(S_rn.t.shape[0])
-      for index in range(S_rn.t.shape[0]) :
-        time_matrix[index] = S_rn.t[index]
-
-      psth_rn = self.compute_psth_for_mldecoding(time_matrix,S_rn.i,End_of_delay,self.specF['decode_spikes_timestep'])[:,int(round(End_of_delay/self.specF['decode_spikes_timestep']))-1]
-      for index_pool in range(self.specF['N_sensory_pools']) :
-        Results_ml_spikes[index_simulation,index_pool] = self.ml_decode(psth_rn[index_pool*self.specF['N_sensory']:(index_pool+1)*self.specF['N_sensory']],Matrix_tuning)
-        if numpy.isnan(InputCenter[index_pool])==False : # or index_pool in Matrix_pools_receiving_inputs
-          Drift_from_ml_spikes[index_simulation,index_pool] = self.compute_drift(Results_ml_spikes[index_simulation,index_pool],InputCenter[index_pool])
-
-      print('Initial inputs were (nan means no initial input into this SN)')
-      print(Matrix_initial_input[index_simulation,:])
-      print("Memory is found ")
-      print(Matrix_abs>activity_threshold)
-      print("ML decoding gives")
-      print(Results_ml_spikes[index_simulation,:])
-      print("Decoding from the activity vector gives")
-      print(Matrix_angle)
-      print('\n')
-            
-      print("---------- Computing capacity, maintained and spurious memories ----------")
-
-      proba_maintained = 0
-      proba_spurious = 0
-      for index_pool_capacity in range(self.specF['N_sensory_pools']) :
-        if Matrix_abs[index_pool_capacity]>activity_threshold :
-          if index_pool_capacity in Matrix_pools_receiving_inputs :
-            proba_maintained+=1
-          else :
-            proba_spurious+=1
-      print(str(proba_maintained)+' maintained memories')
-      print(str(Matrix_pools_receiving_inputs.shape[0]-proba_maintained)+' forgotten memories')
-      print(str(proba_spurious)+' spurious memories\n')
-      proba_maintained/=float(load)
-      if load!=self.specF['N_sensory_pools'] :
-        proba_spurious/=float(self.specF['N_sensory_pools']-load)
-
-      Matrix_all_results[index_simulation,:] = numpy.asarray([proba_maintained,proba_spurious])
-      # ipdb.set_trace()
-      gcPython.collect()
-
-
-    # saving  
-    numpy.savez_compressed(self.specF['path_sim'], Matrix_all_results=Matrix_all_results,Matrix_abs_all=Matrix_abs_all, Matrix_angle_all=Matrix_angle_all, Results_ml_spikes=Results_ml_spikes, Drift_from_ml_spikes=Drift_from_ml_spikes,Matrix_initial_input = Matrix_initial_input)
-    print("All results saved in the folder")
+    matrix_memory_results = numpy.asarray([proba_maintained,proba_spurious])
+    # ipdb.set_trace()
     gcPython.collect()
-
     
-    return 
+    return matrix_abs, matrix_angle, matrix_initial_input, results_ml_spikes, drift_from_ml_spikes, matrix_memory_results, index_simulation
+
