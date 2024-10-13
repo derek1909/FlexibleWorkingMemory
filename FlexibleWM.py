@@ -4,7 +4,6 @@
 
 
 import pickle, numpy, scipy, pylab, os
-import pdb
 import scipy.stats
 import math 
 import sys
@@ -19,7 +18,7 @@ import gc as gcPython
 import ipdb
 from tqdm.auto import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import matplotlib.pyplot as plt 
 
 import logging
 logging.getLogger().setLevel(logging.WARNING)  # Set logging level to WARNING or ERROR to mute INFO messages
@@ -520,15 +519,13 @@ class FlexibleWM:
       Rec_RN_RCN.w = Intermed_matrix_rn_to_rcn2
 
     R_rn = StateMonitor(Recurrent_Pools, 'rate_rec', record=True, dt=self.specF['window_save_data']*second)
+    R_rnd = StateMonitor(RCN_pool, 'rate_rnd', record=True, dt=self.specF['window_save_data']*second)
 
     if self.specF['plot_raster'] :
       S_rn = SpikeMonitor(Recurrent_Pools)
       if self.specF['with_random_network'] :
         S_rcn = SpikeMonitor(RCN_pool)
 
-
-
-    # M = PopulationRateMonitor(RCN_pool)
     
     # STORE THE NETWORK, in case we run a large number of simulations with the same network
     store('initialized')
@@ -603,8 +600,9 @@ class FlexibleWM:
         RCN_pool.S_ext_rnd = inp_baseline_rnd
       run(Simtime-IT2)
       
-      # figure()
-      # plot(M.t/ms, M.rate/Hz)
+      plt.figure()
+      plt.plot(R_rnd.t,R_rnd.rate_rnd[100])
+      plt.show()
       # error
 
       if self.specF['plot_raster'] :
