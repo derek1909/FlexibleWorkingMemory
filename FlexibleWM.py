@@ -484,65 +484,11 @@ class FlexibleWM:
     gcPython.collect()
     
     return 
-  
-
-
-
-  def assess_memory_performance(self) : 
-
-    num_trials = self.specF['Number_of_trials']
-
-    Matrix_all_results = numpy.ones((self.specF['Number_of_trials'],2))*numpy.nan
-    Matrix_abs_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Matrix_angle_all = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Results_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Drift_from_ml_spikes = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-    Matrix_initial_input = numpy.ones((self.specF['Number_of_trials'],self.specF['N_sensory_pools']))*numpy.nan
-
-    if not (self.specF['same_network_to_use'] and os.path.exists(self.specF['path_for_same_network'])):
-      self.initialize_weights()
-
-    if self.specF['num_cores'] == 1:
-      for index_simulation in tqdm(range(num_trials), desc="Trials"):
-        result = self.run_a_sim(index_simulation)
-
-        Matrix_abs_all[index_simulation] = result[0]
-        Matrix_angle_all[index_simulation] = result[1]
-        Matrix_initial_input[index_simulation] = result[2]
-        Results_ml_spikes[index_simulation] = result[3]
-        Drift_from_ml_spikes[index_simulation] = result[4]
-        Matrix_all_results[index_simulation] = result[5]
-
-    elif self.specF['num_cores'] > 1:
-      with ProcessPoolExecutor(max_workers=self.specF['num_cores']) as executor:
-        futures = [executor.submit(self.run_a_sim, index_simulation) for index_simulation in range(num_trials)]
-        for future in tqdm(as_completed(futures), total=num_trials, desc="Trials"):
-        # for future in as_completed(futures):
-          result = future.result() 
-          index_simulation = result[-1]
-          # result = matrix_abs, matrix_angle, matrix_initial_input, results_ml_spikes, drift_from_ml_spikes, matrix_memory_results
-          Matrix_abs_all[index_simulation] = result[0]
-          Matrix_angle_all[index_simulation] = result[1]
-          Matrix_initial_input[index_simulation] = result[2]
-          Results_ml_spikes[index_simulation] = result[3]
-          Drift_from_ml_spikes[index_simulation] = result[4]
-          Matrix_all_results[index_simulation] = result[5]
-
-    else:
-      error
-
-    # saving  
-    numpy.savez_compressed(self.specF['path_sim'], Matrix_all_results=Matrix_all_results,Matrix_abs_all=Matrix_abs_all, Matrix_angle_all=Matrix_angle_all, Results_ml_spikes=Results_ml_spikes, Drift_from_ml_spikes=Drift_from_ml_spikes,Matrix_initial_input = Matrix_initial_input)
-    print("All results saved in the folder")
-    gcPython.collect()
-    
-    return 
-  
 
 
   def run_a_sim(self, index_simulation) : 
     numpy.random.seed()
-    gcPython.enable()
+    # gcPython.enable()
     # --------------------------------- Network parameters ---------------------------------------------------------
     # Setting the simulation timestep
     defaultclock.dt = self.specF['clock']*ms     # this will be used by all objects that do not explicitly specify a clock or dt value during construction
@@ -698,6 +644,11 @@ class FlexibleWM:
       error
 
       
+    # print(R_rn.rate_rec.shape)
+    # plt.figure()
+    # plt.plot(R_rn.rate_rec.shape)
+    # plt.show()
+    # error
     # RESULTS
     End_of_delay = self.specF['simtime']-self.specF['window_save_data']
     Time_chosen = int(round(End_of_delay/self.specF['window_save_data']))       
@@ -743,7 +694,6 @@ class FlexibleWM:
 
     matrix_memory_results = numpy.asarray([proba_maintained,proba_spurious])
     # ipdb.set_trace()
-    gcPython.collect()
+    # gcPython.collect()
     
     return matrix_abs, matrix_angle, matrix_initial_input, results_ml_spikes, drift_from_ml_spikes, matrix_memory_results, index_simulation
-
