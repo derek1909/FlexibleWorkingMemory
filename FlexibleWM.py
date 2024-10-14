@@ -640,17 +640,9 @@ class FlexibleWM:
         close()
       error
 
-      
-    # print(R_rn.t.shape)
-    # plt.figure()
-    # plt.plot(R_rn.rate_rec.shape)
-    # plt.show()
-    # error
-    # RESULTS
-    # End_of_delay = self.specF['simtime']-self.specF['window_save_data']
-    # Time_chosen = int(round(End_of_delay/self.specF['window_save_data']))       
-    # R_rn_T = np.transpose(R_rn.rate_rec.copy())  # beware np.transpose is reference
-    matrix_abs, matrix_angle = self.compute_activity_vector(R_rn.rate_rec.copy())
+    rate_rec = R_rn.rate_rec.copy()
+    rate_rnd = R_rnd.rate_rnd.copy()
+    matrix_abs, matrix_angle = self.compute_activity_vector(rate_rec)
 
       
     # if self.specF['compute_tuning_curve'] :
@@ -691,4 +683,5 @@ class FlexibleWM:
     # time = R_rn.t
     # ipdb.set_trace()
     # gcPython.collect()
-    return matrix_abs, matrix_angle, proba_maintained, proba_spurious, index_simulation
+    # print('sim time step:',R_rn.t)
+    return matrix_abs, matrix_angle, proba_maintained, proba_spurious, rate_rec, rate_rnd, index_simulation

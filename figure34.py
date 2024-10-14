@@ -21,12 +21,13 @@ if __name__ == "__main__":
 
     dictionnary={
         'name_simu':f'FlexibleWM/{sim_name}',
-        'Number_of_trials':60,
-        'specific_load':7, # number of items to remember. The specific location is random
+        'Number_of_trials':40,
+        'specific_load':3, # number of items to remember. The specific location is random
         'compute_tuning_curve':False, # Reuse tuning curve
         'same_network_to_use':True,
         'plot_raster':False,
-        'num_cores':6,
+        'num_cores':4,
+        'window_save_data':0.01,
         # 'create_a_specific_network':True,
 
         } # Add here any parameter you want to change from default. Defaults values are at the beginning of FlexibleWM.py
@@ -42,6 +43,8 @@ if __name__ == "__main__":
     Matrix_angle_all = np.ones((MyModel.specF['Number_of_trials'],MyModel.specF['N_sensory_pools'],time_steps_num))*np.nan
     Matrix_proba_maintained = np.ones((MyModel.specF['Number_of_trials'],time_steps_num))*np.nan
     Matrix_proba_spurious = np.ones((MyModel.specF['Number_of_trials'],time_steps_num))*np.nan
+    Matrix_rate_rec = np.ones((MyModel.specF['Number_of_trials'],MyModel.specF['N_sensory_pools']*MyModel.specF['N_sensory'],time_steps_num))*np.nan
+    Matrix_rate_rnd = np.ones((MyModel.specF['Number_of_trials'],MyModel.specF['N_random'],time_steps_num))*np.nan
 
     if not (MyModel.specF['same_network_to_use'] and os.path.exists(MyModel.specF['path_for_same_network'])):
         MyModel.initialize_weights()
@@ -54,6 +57,10 @@ if __name__ == "__main__":
             Matrix_angle_all[index_simulation] = result[1]
             Matrix_proba_maintained[index_simulation] = result[2]
             Matrix_proba_spurious[index_simulation] = result[3]
+            Matrix_rate_rec[index_simulation] = result[4]
+            Matrix_rate_rnd[index_simulation] = result[5]
+
+    
 
 
     elif MyModel.specF['num_cores'] > 1:
@@ -68,8 +75,8 @@ if __name__ == "__main__":
                 Matrix_angle_all[index_simulation] = result[1]
                 Matrix_proba_maintained[index_simulation] = result[2]
                 Matrix_proba_spurious[index_simulation] = result[3]
-                
-
+                Matrix_rate_rec[index_simulation] = result[4]
+                Matrix_rate_rnd[index_simulation] = result[5]
     else:
         error
 
@@ -86,37 +93,29 @@ if __name__ == "__main__":
     print(f"Total running time: {total_time:.2f} seconds")
 
 
+    plt.figure()
+
+
     load = dictionnary['specific_load']
     print('Matrix_proba_maintained',Matrix_proba_maintained.shape)
     acc = np.sum(Matrix_proba_maintained/Matrix_proba_maintained.shape[0],axis=0)*100
     print('acc:',acc.shape)
-    acc[0:2] = 100
-    plt.figure()
+    # acc[0:2] = 100
+
+
     plt.plot(time_steps,acc)
-    plt.axvspan(0, 0.1, color='yellow', alpha=0.3, label="stimuli on")
     plt.ylim([0,110])
     plt.title('Forgetting during the delay period')
-    plt.xlabel('Time from stinuli onset')
     plt.ylabel('Memory accuracy (%)')
 
+    # plt.plot(time_steps,np.average(Matrix_rate_rnd,axis=(0,1)))
+    # plt.ylim([0,30])
+    # plt.title('Firing rate of neurons in the random network')
+    # plt.ylabel('Average Firing Rate (Hz)')
+
+
+
+    plt.axvspan(0.1, 0.2, color='yellow', alpha=0.3, label="stimuli on")
+    plt.xlabel('Time from stinuli onset')
+    plt.legend()
     plt.show()
-
-    # figure()
-    # subplot(211)
-    # plot_raster(S_rcn.i, S_rcn.t, time_unit=second, marker=',', color='k')
-    # ylabel('Random neurons')
-    # subplot(212)
-    # plot_raster(S_rn.i, S_rn.t, time_unit=second, marker=',', color='k')
-    # for index_sn in range(self.specF['N_sensory_pools']+1) :
-    #     plot(np.arange(0,self.specF['simtime']+self.specF['window_save_data']/2.,self.specF['window_save_data']),index_sn*self.specF['N_sensory']*np.ones(int(round(self.specF['simtime']/self.specF['window_save_data']))+1),color='b', linewidth=0.5)
-    # ylabel('Sensory neurons')
-    # savefig(self.specF['path_to_save']+'rasterplot_trial'+str(index_simulation)+'.png')
-    # close()
-    # print(f'load_number = {load}, Percent Maintained: {acc:.1f}%')
-    # print()
-    # plt.imshow(Matrix_all_results)
-    # Example: print one of the arrays
-    # print(array1)
-
-    # # Close the file after accessing the arrays
-    # npzfile.close()
